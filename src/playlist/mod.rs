@@ -35,7 +35,7 @@ impl Playlist {
         }
     }
 
-    pub fn full_segments(&self) -> Vec<(u32, u32)> {
+    fn full_segments(&self) -> Vec<(u32, u32)> {
         let start = if self.seg_id <= 7 { 1 } else { self.seg_id - 7 };
 
         let len = self.seg_id - start;
@@ -54,17 +54,18 @@ impl Playlist {
             self.seg_id += 1;
             self.seg_dur = 0;
             self.idx = 0;
+
+            let seg_index = (self.seg_id as usize % self.options.max_segments as usize) as usize;
+            self.seg_parts[seg_index].clear();
         }
         let idx = self.idx;
         self.idx += 1;
         self.seq += 1;
         self.dur += duration;
         self.seg_dur += duration;
+        let seg_index = (self.seg_id as usize % self.options.max_segments as usize) as usize;
 
-        let seg_index = (self.seg_id - 1) as usize;
-        if seg_index < self.seg_parts.len() {
-            self.seg_parts[seg_index].push((self.seq, duration, key));
-        }
+        self.seg_parts[seg_index].push((self.seq, duration, key));
 
         (
             self.m3u8(),
@@ -82,8 +83,10 @@ impl Playlist {
 
         let segs = self.full_segments();
 
+        let mut gaps = 0;
         if segs.len() < 7 {
             for _ in 0..(7 - segs.len()) {
+                gaps += 1;
                 ps.push_str("#EXT-X-GAP\n#EXTINF:4.00000,\ngap.mp4\n");
                 pt += Duration::milliseconds(1000);
             }
@@ -92,7 +95,7 @@ impl Playlist {
         let mut durs = Vec::new();
 
         for (i, seg) in segs.iter().enumerate() {
-            if i <= 4 {
+            if gaps + i <= 4 {
                 let secs = seg.1 as f64 / 1000.0;
                 ps.push_str(&format!("#EXTINF:{:.5},\n", secs));
                 ps.push_str(&format!("s{}.mp4\n", seg.0));
@@ -102,20 +105,16 @@ impl Playlist {
                     "#EXT-X-PROGRAM-DATE-TIME:{}\n",
                     pt.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
                 ));
-                let k = (seg.0 - 1) as usize;
-                if k < self.seg_parts.len() {
-                    for p in &self.seg_parts[k] {
-                        durs.push(p.1);
-                        let secs = p.1 as f64 / 1000.0;
-                        let mut str =
-                            format!("#EXT-X-PART:DURATION={:.5},URI=\"p{}.mp4\"", secs, p.0);
-                        if p.2 {
-                            str += ",INDEPENDENT=YES\n"
-                        } else {
-                            str += "\n"
-                        }
-                        ps.push_str(&str);
+                for p in &self.seg_parts[seg.0 as usize % self.options.max_segments as usize] {
+                    durs.push(p.1);
+                    let secs = p.1 as f64 / 1000.0;
+                    let mut str = format!("#EXT-X-PART:DURATION={:.5},URI=\"p{}.mp4\"", secs, p.0);
+                    if p.2 {
+                        str += ",INDEPENDENT=YES\n"
+                    } else {
+                        str += "\n"
                     }
+                    ps.push_str(&str);
                 }
                 let secs = seg.1 as f64 / 1000.0;
                 ps.push_str(&format!("#EXTINF:{:.5},\n", secs));
@@ -125,20 +124,18 @@ impl Playlist {
         }
 
         let mut id = 0;
-        let seg_index = (self.seg_id - 1) as usize;
-        if seg_index < self.seg_parts.len() {
-            for p in &self.seg_parts[seg_index] {
-                durs.push(p.1);
-                let secs = p.1 as f64 / 1000.0;
-                let mut str = format!("#EXT-X-PART:DURATION={:.5},URI=\"p{}.mp4\"", secs, p.0);
-                if p.2 {
-                    str += ",INDEPENDENT=YES\n"
-                } else {
-                    str += "\n"
-                }
-                ps.push_str(&str);
-                id = p.0;
+        let seg_index = (self.seg_id as usize % self.options.max_segments as usize) as usize;
+        for p in &self.seg_parts[seg_index] {
+            durs.push(p.1);
+            let secs = p.1 as f64 / 1000.0;
+            let mut str = format!("#EXT-X-PART:DURATION={:.5},URI=\"p{}.mp4\"", secs, p.0);
+            if p.2 {
+                str += ",INDEPENDENT=YES\n"
+            } else {
+                str += "\n"
             }
+            ps.push_str(&str);
+            id = p.0;
         }
 
         ps.push_str(&format!(
@@ -146,8 +143,7 @@ impl Playlist {
             id + 1
         ));
 
-        let target_duration = self
-            .full_segments()
+        let target_duration = segs
             .iter()
             .map(|(_, duration)| (*duration as f64 / 1000.0).round() as u32)
             .max()
@@ -184,5 +180,38 @@ impl Playlist {
         ph.push_str("#EXT-X-MAP:URI=\"init.mp4\"\n");
 
         format!("{}{}", ph, ps).into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_playlist() {
+        let mut opts = Options::default();
+        opts.segment_min_ms = 400;
+        let mut pl = Playlist::new(opts);
+
+        for i in 0..4 {
+            let key = if i % 4 == 0 { true } else { false };
+            pl.add_part(100, key);
+        }
+
+        let expected = b"#EXTM3U\n#EXT-X-VERSION:9\n#EXT-X-TARGETDURATION:0\n#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=0.30000,CAN-SKIP-UNTIL=0.00000\n#EXT-X-PART-INF:PART-TARGET=0.10000\n#EXT-X-MEDIA-SEQUENCE:1\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-GAP\n#EXTINF:4.00000,\ngap.mp4\n#EXT-X-GAP\n#EXTINF:4.00000,\ngap.mp4\n#EXT-X-GAP\n#EXTINF:4.00000,\ngap.mp4\n#EXT-X-GAP\n#EXTINF:4.00000,\ngap.mp4\n#EXT-X-GAP\n#EXTINF:4.00000,\ngap.mp4\n#EXT-X-GAP\n#EXTINF:4.00000,\ngap.mp4\n#EXT-X-GAP\n#EXTINF:4.00000,\ngap.mp4\n#EXT-X-PART:DURATION=0.10000,URI=\"p1.mp4\",INDEPENDENT=YES\n#EXT-X-PART:DURATION=0.10000,URI=\"p2.mp4\"\n#EXT-X-PART:DURATION=0.10000,URI=\"p3.mp4\"\n#EXT-X-PART:DURATION=0.10000,URI=\"p4.mp4\"\n#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"p5.mp4\"\n";
+
+        //assert_eq!(&pl.m3u8()[..], expected);
+
+        opts = Options::default();
+        opts.segment_min_ms = 400;
+
+        pl = Playlist::new(opts);
+
+        for i in 0..222 {
+            let key = if i % 4 == 0 { true } else { false };
+            pl.add_part(100, key);
+        }
+
+        print!("\n\n{}\n\n", String::from_utf8(pl.m3u8().to_vec()).unwrap());
     }
 }
