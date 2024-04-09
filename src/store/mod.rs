@@ -170,7 +170,7 @@ impl Store {
     fn calculate_seg_index(&self, stream_id: u64, segment_id: usize) -> Option<usize> {
         if let Some(offset) = self.offset(stream_id) {
             let sub_buffer_size = self.options.max_segments;
-            let idx = (segment_id - 1) % sub_buffer_size;
+            let idx = segment_id % sub_buffer_size;
             Some((offset * sub_buffer_size) + idx)
         } else {
             None
@@ -185,8 +185,8 @@ impl Store {
         if let Some(offset) = self.offset(stream_id) {
             let sub_buffer_size =
                 self.options.max_parts_per_segment * self.options.max_parted_segments;
-            let idx = (((segment_id - 1) * self.options.max_parts_per_segment) + part_id)
-                % sub_buffer_size;
+            let idx =
+                ((segment_id * self.options.max_parts_per_segment) + part_id) % sub_buffer_size;
             Some((offset * sub_buffer_size) + idx)
         } else {
             None
@@ -204,7 +204,7 @@ impl Store {
     pub fn get_idxs(&self, stream_id: u64, segment_id: usize) -> Option<(usize, usize)> {
         if let Some(idx) = self.calculate_seg_index(stream_id, segment_id) {
             let b = self.seg_parts[idx].load(Ordering::SeqCst);
-            if let Some(idx) = self.calculate_seg_index(stream_id, segment_id - 1) {
+            if let Some(idx) = self.calculate_seg_index(stream_id, segment_id) {
                 let a = self.seg_parts[idx].load(Ordering::SeqCst);
                 if a < b {
                     return Some((a + 1, b + 1));
