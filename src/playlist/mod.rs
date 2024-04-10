@@ -48,7 +48,8 @@ impl Playlist {
         res
     }
 
-    pub fn add_part(&mut self, duration: u32, key: bool) -> (Bytes, usize, usize, usize) {
+    pub fn add_part(&mut self, duration: u32, key: bool) -> (Bytes, usize, usize, usize, usize) {
+        let last_idx = self.idx;
         if key && (self.seg_dur) >= self.options.segment_min_ms {
             self.seg_durs.push(self.seg_dur);
             self.seg_id += 1;
@@ -71,6 +72,7 @@ impl Playlist {
             self.m3u8(),
             self.seg_id as usize,
             self.seq as usize,
+            last_idx as usize,
             idx as usize,
         )
     }
