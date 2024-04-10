@@ -204,7 +204,7 @@ impl Store {
     pub fn get_idxs(&self, stream_id: u64, segment_id: usize) -> Option<(usize, usize)> {
         if let Some(idx) = self.calculate_seg_index(stream_id, segment_id) {
             let b = self.seg_parts[idx].load(Ordering::SeqCst);
-            if let Some(idx) = self.calculate_seg_index(stream_id, segment_id) {
+            if let Some(idx) = self.calculate_seg_index(stream_id, segment_id - 1) {
                 let a = self.seg_parts[idx].load(Ordering::SeqCst);
                 if a < b {
                     return Some((a + 1, b + 1));
@@ -296,6 +296,9 @@ mod tests {
 
             ranges.insert(stream_id, range);
         }
+
+        let ids = rb.get_idxs(1, 13);
+        assert_eq!(ids.unwrap(), (49, 53));
 
         for (stream_id, added_data) in all_added_data.iter().enumerate() {
             for &(a, b, c) in added_data.iter().rev().take(3).collect::<Vec<_>>().iter() {
