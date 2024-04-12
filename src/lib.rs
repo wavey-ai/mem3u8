@@ -14,10 +14,10 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            max_segments: 7,
-            num_playlists: 100,
+            max_segments: 128,
+            num_playlists: 10,
             max_parts_per_segment: 128,
-            max_parted_segments: 3,
+            max_parted_segments: 128,
             segment_min_ms: 1500,
             buffer_size_kb: 5,
             init_size_kb: 5,

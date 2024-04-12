@@ -104,6 +104,16 @@ impl Store {
         }
     }
 
+    fn zero_buffer(&self, idx: usize) {
+        let buffer_size_bytes = self.options.buffer_size_kb * 1024;
+        let buffer_repeat_value = Bytes::from(vec![0u8; buffer_size_bytes]);
+
+        if let Some(lock) = self.buffer.get(idx) {
+            let mut buf = lock.write().unwrap();
+            *buf = buffer_repeat_value;
+        }
+    }
+
     pub fn set_init(&self, stream_id: u64, data_bytes: Bytes) {
         if let Some(n) = self.offset(stream_id) {
             let mut inits_lock = self.inits[n].write().unwrap();
@@ -121,7 +131,14 @@ impl Store {
         }
     }
 
-    pub fn add(&self, stream_id: u64, segment_id: usize, part_id: usize, data: Bytes) -> u64 {
+    pub fn add(
+        &self,
+        stream_id: u64,
+        segment_id: usize,
+        seq: usize,
+        idx: usize,
+        data: Bytes,
+    ) -> u64 {
         if self.offset(stream_id).is_none() {
             self.add_stream_id(stream_id);
         }
@@ -135,13 +152,13 @@ impl Store {
         packet.put_u64(h);
         packet.put(b);
 
-        if let Some(idx) = self.calculate_index(stream_id, segment_id, part_id) {
-            let mut lock = self.buffer[idx].write().unwrap();
+        if let Some(i) = self.calculate_index(stream_id, segment_id, idx) {
+            let mut lock = self.buffer[i].write().unwrap();
             *lock = packet.freeze();
         }
 
         self.set_last_seg(stream_id, segment_id);
-        self.set_last_part(stream_id, part_id);
+        self.set_last_part(stream_id, idx);
 
         h
     }
@@ -177,7 +194,7 @@ impl Store {
         }
     }
 
-    fn calculate_index(&self, stream_id: u64, segment_id: usize, part_id: usize) -> Option<usize> {
+    fn calculate_index(&self, stream_id: u64, segment_id: usize, seq: usize) -> Option<usize> {
         if segment_id == 0 {
             return None;
         }
@@ -185,19 +202,19 @@ impl Store {
         if let Some(offset) = self.offset(stream_id) {
             let sub_buffer_size =
                 self.options.max_parts_per_segment * self.options.max_parted_segments;
-            let idx =
-                ((segment_id * self.options.max_parts_per_segment) + part_id) % sub_buffer_size;
+            let idx = ((segment_id * self.options.max_parts_per_segment) + seq) % sub_buffer_size;
             Some((offset * sub_buffer_size) + idx)
         } else {
             None
         }
     }
 
-    pub fn end_segment(&self, stream_id: u64, part_id: usize) {
-        if let Some(seg_id) = self.last_seg(stream_id) {
-            if let Some(idx) = self.calculate_seg_index(stream_id, seg_id) {
-                self.seg_parts[idx].store(part_id, Ordering::SeqCst);
-            }
+    pub fn end_segment(&self, stream_id: u64, segment_id: usize, part_id: usize) {
+        if let Some(idx) = self.calculate_seg_index(stream_id, segment_id - 1) {
+            self.seg_parts[idx].store(part_id, Ordering::SeqCst);
+        }
+        if let Some(idx) = self.calculate_seg_index(stream_id, segment_id) {
+            self.zero_buffer(idx);
         }
     }
 
@@ -207,7 +224,7 @@ impl Store {
             if let Some(idx) = self.calculate_seg_index(stream_id, segment_id - 1) {
                 let a = self.seg_parts[idx].load(Ordering::SeqCst);
                 if a < b {
-                    return Some((a + 1, b + 1));
+                    return Some((a, b));
                 }
             }
         }
@@ -227,8 +244,11 @@ impl Store {
             if let Some(idx) = self.calculate_index(stream_id, segment_id, part_id) {
                 let lock = self.buffer[idx].read().unwrap();
                 let (payload, h) = self.get_bytes(&lock);
-                drop(lock);
-                Some((payload, h))
+                if h != 0 {
+                    Some((payload, h))
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -274,7 +294,8 @@ mod tests {
             let mut range = Vec::new();
             for a in 1..14 {
                 let ra = part_id;
-                for _ in 0..4 {
+                for b in 0..4 {
+                    dbg!(b, part_id);
                     let data = {
                         let mut d = BytesMut::new();
                         d.put_u8(a);
@@ -283,14 +304,16 @@ mod tests {
                         d.freeze()
                     };
 
-                    let h = rb.add(stream_id as u64, a as usize, part_id, data);
+                    let h = rb.add(stream_id as u64, a as usize, part_id, 0, data);
                     added_data.push((a as usize, part_id, h));
 
                     part_id += 1;
                 }
                 range.push((ra, part_id));
 
-                rb.end_segment(stream_id as u64, part_id - 1);
+                rb.end_segment(stream_id as u64, a as usize, part_id);
+                let idxs = rb.get_idxs(stream_id as u64, a as usize);
+                dbg!(idxs);
             }
             all_added_data.push(added_data);
 
