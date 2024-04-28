@@ -1,8 +1,8 @@
 use crate::cache::RingBuffer as CacheRingBuffer;
 use crate::playlist::Playlist;
 use crate::store::Store;
+use au::Fmp4;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use fmp4_segmenter::Fmp4;
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
