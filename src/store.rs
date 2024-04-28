@@ -82,14 +82,29 @@ impl Store {
     }
 
     fn add_stream_id(&self, stream_id: u64) {
+        dbg!(stream_id);
         let idx = self.offset.load(Ordering::SeqCst);
-        let next_offset = idx + 1;
+        let next_offset = (idx + 1) % self.options.num_playlists;
         {
             let mut lock = self.offsets.write().unwrap();
             let stream_id = stream_id.to_owned();
             lock.insert(stream_id, idx);
         }
+        self.set_last_seg(idx as u64, 0);
+        self.set_last_part(idx as u64, 0);
+
+        let seg_idx = self.options.max_segments * idx;
+        for n in seg_idx..(seg_idx + self.options.max_segments) {
+            self.seg_parts[n].store(0, Ordering::SeqCst)
+        }
+
         self.offset.store(next_offset, Ordering::SeqCst);
+    }
+
+    pub(crate) fn zero_stream_id(&self, stream_id: u64) {
+        let mut lock = self.offsets.write().unwrap();
+        let stream_id = stream_id.to_owned();
+        lock.remove(&stream_id);
     }
 
     fn set_last_seg(&self, stream_id: u64, id: usize) {
@@ -169,12 +184,12 @@ impl Store {
         encoder.finish().map_err(|e| e.to_string())
     }
 
-    fn is_included(&self, stream_id: u64, segment_id: usize, part_id: usize) -> bool {
+    fn is_included(&self, stream_id: u64, segment_id: usize, part_idx: usize) -> bool {
         if let (Some(last_seg), Some(last_part)) =
             (self.last_seg(stream_id), self.last_part(stream_id))
         {
             if segment_id < last_seg
-                || (segment_id == last_seg && part_id <= last_part)
+                || (segment_id == last_seg && part_idx <= last_part)
                     && (last_seg - segment_id) < self.options.max_segments
             {
                 return true;
@@ -239,9 +254,9 @@ impl Store {
         (payload, h)
     }
 
-    pub fn get(&self, stream_id: u64, segment_id: usize, part_id: usize) -> Option<(Bytes, u64)> {
-        if self.is_included(stream_id, segment_id, part_id) {
-            if let Some(idx) = self.calculate_index(stream_id, segment_id, part_id) {
+    pub fn get(&self, stream_id: u64, segment_id: usize, part_idx: usize) -> Option<(Bytes, u64)> {
+        if self.is_included(stream_id, segment_id, part_idx) {
+            if let Some(idx) = self.calculate_index(stream_id, segment_id, part_idx) {
                 let lock = self.buffer[idx].read().unwrap();
                 let (payload, h) = self.get_bytes(&lock);
                 if h != 0 {

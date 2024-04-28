@@ -1,3 +1,5 @@
+pub mod cache;
+pub mod mq;
 pub mod playlist;
 pub mod store;
 
@@ -14,10 +16,10 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            max_segments: 128,
+            max_segments: 32,
             num_playlists: 10,
             max_parts_per_segment: 128,
-            max_parted_segments: 128,
+            max_parted_segments: 32,
             segment_min_ms: 1500,
             buffer_size_kb: 5,
             init_size_kb: 5,
