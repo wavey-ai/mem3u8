@@ -13,4 +13,4 @@ flate2 = "1.0.28"
 xxhash-rust = { version = "0.8.10", features = ["xxh3", "const_xxh3"] }
 tokio = { version = "1.35.1", features = ["full"] }
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json"] }
-au = { git = "ssh://git@github.com/wavey-ai/au.git" }
+au = { git = "http://github.com/wavey-ai/au.git" }
